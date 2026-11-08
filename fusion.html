@@ -771,8 +771,8 @@
 
             handleFiles(fileList) {
                 const validFiles = Array.from(fileList).filter(file => {
-                    return file.name.includes('_Export_courbe_de_charge_Consommation_') && 
-                           file.name.endsWith('.xlsx');
+                    return /Export_courbe_de_charge/i.test(file.name) &&
+                           /\.xlsx$/i.test(file.name);
                 });
 
                 if (validFiles.length === 0) {
@@ -910,18 +910,24 @@
                             const data = new Uint8Array(e.target.result);
                             const workbook = XLSX.read(data, { type: 'array' });
 
-                            if (!workbook.SheetNames.includes('Consommation Horaire')) {
-                                throw new Error('Feuille "Consommation Horaire" non trouvée');
+                            // Normalise un nom d'onglet (minuscules, sans accents)
+                            const norm = n => n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                            // Onglet de consommation : "Puissance moyenne soutirée" (courbe de charge),
+                            // ou anciens formats ("Consommation Horaire", "Consommation ...")
+                            const sheetName = workbook.SheetNames.find(n => /soutir/.test(norm(n)))
+                                           || workbook.SheetNames.find(n => /consommation/.test(norm(n)));
+                            if (!sheetName) {
+                                throw new Error('Aucun onglet de consommation (soutirée / consommation) trouvé. Onglets présents : ' + workbook.SheetNames.join(', '));
                             }
 
-                            const worksheet = workbook.Sheets['Consommation Horaire'];
+                            const worksheet = workbook.Sheets[sheetName];
                             const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
                             // Trouver les en-têtes
                             let headerRow = -1;
                             for (let i = 0; i < jsonData.length; i++) {
                                 const row = jsonData[i];
-                                if (row.includes('Début') && row.includes('Fin') && 
+                                if (row.some(c => c && c.toString().trim() === 'Début') && row.some(c => c && c.toString().trim() === 'Fin') &&
                                     row.some(cell => cell && cell.toString().includes('Valeur'))) {
                                     headerRow = i;
                                     break;
@@ -933,8 +939,8 @@
                             }
 
                             const headers = jsonData[headerRow];
-                            const debutIndex = headers.indexOf('Début');
-                            const finIndex = headers.indexOf('Fin');
+                            const debutIndex = headers.findIndex(h => h && h.toString().trim() === 'Début');
+                            const finIndex = headers.findIndex(h => h && h.toString().trim() === 'Fin');
                             const valeurIndex = headers.findIndex(h => h && h.toString().includes('Valeur'));
 
                             const records = [];
@@ -942,7 +948,7 @@
                             
                             for (let i = headerRow + 1; i < jsonData.length; i++) {
                                 const row = jsonData[i];
-                                if (row[debutIndex] && row[finIndex] && row[valeurIndex]) {
+                                if (row[debutIndex] && row[finIndex] && row[valeurIndex] !== undefined && row[valeurIndex] !== null && row[valeurIndex] !== '') {
                                     const debutRaw = row[debutIndex];
                                     const finRaw = row[finIndex];
                                     
@@ -1297,7 +1303,7 @@
                     
                     // Convertir la valeur en nombre (gérer les virgules françaises)
                     let powerKW = 0;
-                    if (record.valeur && record.valeur !== 'NA') {
+                    if (record.valeur !== undefined && record.valeur !== null && record.valeur !== '' && record.valeur !== 'NA') {
                         powerKW = typeof record.valeur === 'string' ? 
                                  parseFloat(record.valeur.replace(',', '.')) : 
                                  parseFloat(record.valeur);
@@ -1414,7 +1420,7 @@
                     
                     // Convertir la valeur en nombre
                     let powerKW = 0;
-                    if (record.valeur && record.valeur !== 'NA') {
+                    if (record.valeur !== undefined && record.valeur !== null && record.valeur !== '' && record.valeur !== 'NA') {
                         powerKW = typeof record.valeur === 'string' ? 
                                  parseFloat(record.valeur.replace(',', '.')) : 
                                  parseFloat(record.valeur);
@@ -1473,7 +1479,7 @@
                     // Ajouter les données au jour
                     dailyData[weekKey][dayKey].consumption += consumptionKWh;
                     dailyData[weekKey][dayKey].records++;
-                    if (!record.valeur || record.valeur === 'NA') {
+                    if (record.valeur === undefined || record.valeur === null || record.valeur === '' || record.valeur === 'NA') {
                         dailyData[weekKey][dayKey].naCount++;
                     }
                     
@@ -1641,7 +1647,7 @@
                     naByDay[dateKey].total++;
                     totalRecords++;
 
-                    if (!record.valeur || record.valeur === 'NA' || record.valeur === '' || record.valeur === null) {
+                    if (record.valeur === undefined || record.valeur === null || record.valeur === '' || record.valeur === 'NA') {
                         naByDay[dateKey].na++;
                         totalNA++;
                     }
